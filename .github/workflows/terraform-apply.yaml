@@ -1,0 +1,68 @@
+name: Terraform Apply_Destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Choose Terraform action"
+        type: choice
+        required: true
+        options:
+          - Apply
+          - Destroy
+      apply_confirm:
+        description: "Type APPLY to confirm apply"
+        required: false
+      destroy_confirm:
+        description: "Type DESTROY to confirm destroy"
+        required: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    env:
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.TF_APPLY_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform init -input=false
+        working-directory: terraform
+
+# ---------------- APPLY ----------------
+      - name: Terraform Apply
+        if: ${{ github.event.inputs.action == 'Apply' && github.event.inputs.apply_confirm == 'APPLY'}}
+        run: terraform apply -auto-approve -input=false
+        working-directory: terraform
+      
+      - name: Apply blocked
+        if: ${{ github.event.inputs.action == 'Apply' && github.event.inputs.apply_confirm != 'APPLY' }}
+        run: |
+          echo "Apply blocked: type APPLY to confirm"
+          exit 1
+# ---------------- DESTROY ----------------
+      - name: Terraform Destroy
+        if: ${{ github.event.inputs.action == 'Destroy' && github.event.inputs.destroy_confirm == 'DESTROY' }}
+        run: terraform destroy -auto-approve -input=false
+        working-directory: terraform
+
+      - name: Destroy blocked
+        if: ${{ github.event.inputs.action == 'Destroy' && github.event.inputs.destroy_confirm != 'DESTROY' }}
+        run: |
+          echo "Destroy blocked: type DESTROY to confirm"
+          exit 1
