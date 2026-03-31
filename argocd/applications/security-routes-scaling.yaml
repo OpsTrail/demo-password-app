@@ -1,18 +1,17 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: envoy-gateway
+  name: seurity-routes-scaling
   namespace: argocd
   annotations:
-    argocd.argoproj.io/sync-wave: "0"
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   project: default
   source:
-    path: gateway-helm
+    path: argocd/manifests
     repoURL: https://github.com/OpsTrail/demo-password-app.git
     targetRevision: main
   destination:
-    namespace: envoy-gateway
     server: https://kubernetes.default.svc
   syncPolicy:
     syncOptions:
