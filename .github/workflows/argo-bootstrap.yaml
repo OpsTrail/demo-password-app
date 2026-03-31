@@ -1,0 +1,65 @@
+name: ArgoCD Bootstrap
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/argo-bootstrap.yaml"
+
+permissions:
+    contents: read
+    id-token: write
+
+env:
+  AZURE_RESOURCE_GROUP: passwordapp-rg
+  AKS_CLUSTER_NAME: passwordapp-aks
+
+jobs:
+    bootstrap:
+        runs-on: ubuntu-latest
+        steps:
+            - name: checkout
+              uses: actions/checkout@v6
+
+            - name: Azure Login
+              uses: azure/login@v2
+              with:
+                client-id: ${{ secrets.ARGO_CLIENT_ID }}
+                tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+                subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+            - name: Setup kubelogin (for AKS AAD)
+              uses: azure/use-kubelogin@v1
+              env:
+               GITHUB_TOKEN: ${{ github.token }}
+              with:
+               kubelogin-version: 'latest' # adjust if needed
+
+            - name: Set AKS context
+              uses: azure/aks-set-context@v3
+              with:
+               resource-group: ${{ env.AZURE_RESOURCE_GROUP }}
+               cluster-name: ${{ env.AKS_CLUSTER_NAME }}
+            
+            - name: Install kubectl
+              uses: azure/setup-kubectl@v3 
+
+            - name: Install Argocd 
+              run: |
+                kubectl create namespace argocd
+                kubectl apply -n argocd --server-side --force-conflicts -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+            
+            - name: Enable ArgoCD insecure mode
+              run: |
+                  echo "Waiting for ArgoCD ConfigMap..."
+                  until kubectl get configmap argocd-cmd-params-cm -n argocd >/dev/null 2>&1; do
+                    echo "Waiting for ConfigMap..."
+                    sleep 5
+                  done
+
+                  echo "Patching ConfigMap..."
+
+                  kubectl patch configmap argocd-cmd-params-cm -n argocd --type merge -p '{"data":{"server.insecure":"true"}}'
+                  echo "Restarting ArgoCD server..."
+                  kubectl rollout restart deployment argocd-server -n argocd
+
+
