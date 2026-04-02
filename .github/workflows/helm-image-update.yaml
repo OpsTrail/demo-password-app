@@ -43,26 +43,36 @@ jobs:
           echo "built=$BUILT" >> $GITHUB_OUTPUT
 
       # Skip entire job if no new image
-      - name: Stop if no new image built
-        if: ${{ steps.meta.outputs.built == 'true' }}
+      - name: Check if tag already exists in values.yaml
+        id: tagcheck
         run: |
-          echo "No new image built — skipping Helm update"
-          exit 0
+            TAG=${{ steps.meta.outputs.hash }}
+            if grep -q "tag: $TAG" $VALUES_FILE; then
+              echo "exists=true" >> $GITHUB_OUTPUT
+            else
+              echo "exists=false" >> $GITHUB_OUTPUT
+            fi
+
+      - name: Stop if tag already exists
+        if: ${{ steps.tagcheck.outputs.exists == 'true' }}
+        run: |
+             echo "Tag already present in values.yaml — skipping Helm update"
+             exit 0
 
       - name: Checkout helm-update branch
-        if: ${{ steps.meta.outputs.built == 'true' }}
+        if: ${{ steps.tagcheck.outputs.exists == 'false' }}
         uses: actions/checkout@v6
         with:
           ref: helm-update
 
       - name: Update values.yaml with hash tag
-        if: ${{ steps.meta.outputs.built == 'true' }}
+        if: ${{ steps.tagcheck.outputs.exists == 'false' }}
         run: |
           TAG=${{ steps.meta.outputs.hash }}
           sed -i 's|tag: .*|tag: '"$TAG"'|g' $VALUES_FILE
 
       - name: Commit changes to helm-update branch
-        if: ${{ steps.meta.outputs.built == 'true' }}
+        if: ${{ steps.tagcheck.outputs.exists == 'false' }}
         run: |
           git config user.name "gha-helm-iamge-update"
           git config user.email "actions@github.com"
@@ -71,4 +81,3 @@ jobs:
           git commit -m "chore: update image tag to $TAG" || echo "No changes"
 
           git push origin helm-update
-
