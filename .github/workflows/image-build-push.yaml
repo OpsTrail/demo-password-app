@@ -11,6 +11,7 @@ on:
 permissions:
   id-token: write
   contents: read
+  security-events: write
 
 env:
   ACR_NAME: passwordapp
@@ -66,7 +67,8 @@ jobs:
         with:
           context: app
           file: docker/Dockerfile
-          push: true
+          push: false
+          load: true
           tags: |
             ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ steps.dockerhash.outputs.hash }}
           cache-from: type=gha
@@ -76,23 +78,72 @@ jobs:
       - name: Image already exists
         if: ${{ steps.acrcheck.outputs.exists == 'true' }}
         run: echo "Docker image unchanged — build skipped"
-      
+
+      # Scan EXISTING image (ACR)
+      - name: Scan existing image with Trivy
+        if: ${{ steps.acrcheck.outputs.exists == 'true' }}
+        id: oldimagescan
+        uses: aquasecurity/trivy-action@master
+        with: 
+          image-ref: ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ steps.dockerhash.outputs.hash }} 
+          format: sarif 
+          vuln-type: os,library
+          severity: CRITICAL,HIGH 
+          ignore-unfixed: true
+          output: trivy-results.sarif
+          exit-code: 1
+
+      # Scan NEW image    
+      - name: Scan new image with Trivy
+        if: ${{ steps.acrcheck.outputs.exists == 'false' }}
+        id: newimagescan
+        uses: aquasecurity/trivy-action@master
+        with: 
+          image-ref: ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ steps.dockerhash.outputs.hash }} 
+          format: sarif
+          vuln-type: os,library
+          severity: CRITICAL
+          ignore-unfixed: true
+          output: trivy-results.sarif
+          exit-code: 0
+
+      # Push only if NEW + scan passed
+      - name: Push image to ACR
+        if: ${{ steps.acrcheck.outputs.exists == 'false' && steps.newimagescan.outcome == 'success' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: app
+          file: docker/Dockerfile
+          push: true
+          tags: ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ steps.dockerhash.outputs.hash }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          
       - name: Export image metadata
-        if: always()
+        if: ${{ steps.acrcheck.outputs.exists == 'false' && steps.newimagescan.outcome == 'success' }}
         run: |
             HASH=${{ steps.dockerhash.outputs.hash }}
             EXISTS=${{ steps.acrcheck.outputs.exists }}
+
             if [ "$EXISTS" = "false" ]; then
               BUILT=true
             else
               BUILT=false
             fi
+
             echo "hash=$HASH" > image-metadata.txt
             echo "built=$BUILT" >> image-metadata.txt
-            
+
       - name: Upload image metadata
-        if: always()
+        if: ${{ steps.acrcheck.outputs.exists == 'false' && steps.newimagescan.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: image-metadata
           path: image-metadata.txt
+
+      # Upload SARIF results to GitHub Security
+      - name: Upload Trivy SARIF
+        if: ${{ always() && hashFiles('trivy-results.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-results.sarif
