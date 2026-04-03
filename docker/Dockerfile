@@ -1,5 +1,7 @@
 # Use lightweight Nginx as the web server
-FROM nginx:1.25
+FROM nginx:alpine
+
+RUN apk update && apk upgrade --no-cache
 
 # Remove default nginx static files
 RUN rm -rf /usr/share/nginx/html/*
