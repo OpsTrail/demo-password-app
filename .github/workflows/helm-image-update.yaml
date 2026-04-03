@@ -1,0 +1,82 @@
+name: Update Helm Values with Image Tag
+
+on:
+  workflow_run:
+    workflows: ["Build & Push Docker Image to ACR"]
+    types: [completed]
+    branches: [main]
+
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/helm-image-update.yaml"
+      
+permissions:
+  contents: write
+  actions: read
+
+env:
+  VALUES_FILE: password-app/values.yaml
+
+jobs:
+  update-helm:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Download image metadata artifact
+        env:
+           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+            gh run download ${{ github.event.workflow_run.id }} -n image-metadata
+
+      - name: Read metadata
+        id: meta
+        run: |
+          HASH=$(grep '^hash=' image-metadata.txt | cut -d= -f2)
+          BUILT=$(grep '^built=' image-metadata.txt | cut -d= -f2)
+          echo "hash=$HASH" >> $GITHUB_OUTPUT
+          echo "built=$BUILT" >> $GITHUB_OUTPUT
+
+      - name: Check if tag already exists in values.yaml
+        id: tagcheck
+        run: |
+            TAG=${{ steps.meta.outputs.hash }}
+            if grep -q "tag: $TAG" $VALUES_FILE; then
+              echo "exists=true" >> $GITHUB_OUTPUT
+            else
+              echo "exists=false" >> $GITHUB_OUTPUT
+            fi
+
+      - name: Stop if tag already exists
+        if: ${{ steps.tagcheck.outputs.exists == 'true' }}
+        run: |
+             echo "Tag already present in values.yaml — skipping Helm update"
+             exit 0
+
+      - name: Checkout helm-update branch
+        if: ${{ steps.tagcheck.outputs.exists == 'false' }}
+        uses: actions/checkout@v6
+        with:
+          ref: helm-update
+
+      - name: Update values.yaml with hash tag
+        if: ${{ steps.tagcheck.outputs.exists == 'false' }}
+        run: |
+          TAG=${{ steps.meta.outputs.hash }}
+          sed -i 's|tag: .*|tag: '"$TAG"'|g' $VALUES_FILE
+
+      - name: Commit changes to helm-update branch
+        if: ${{ steps.tagcheck.outputs.exists == 'false' }}
+        run: |
+          git config user.name "gha-helm-iamge-update"
+          git config user.email "actions@github.com"
+
+          git add $VALUES_FILE
+          git commit -m "chore: update image tag to $TAG" || echo "No changes"
+
+          git push origin helm-update
