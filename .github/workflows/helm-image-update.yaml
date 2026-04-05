@@ -53,25 +53,25 @@ jobs:
             fi
 
       - name: Stop if tag already exists
-        if: ${{ steps.tagcheck.outputs.exists == 'true' }}
+        if: ${{ steps.tagcheck.outputs.exists == 'true' && steps.meta.outputs.built == 'false' }}
         run: |
              echo "Tag already present in values.yaml — skipping Helm update"
              exit 0
 
       - name: Checkout helm-update branch
-        if: ${{ steps.tagcheck.outputs.exists == 'false' }}
+        if: ${{ steps.tagcheck.outputs.exists == 'false' || steps.meta.outputs.built == 'true' }}
         uses: actions/checkout@v6
         with:
           ref: helm-update
 
       - name: Update values.yaml with hash tag
-        if: ${{ steps.tagcheck.outputs.exists == 'false' }}
+        if: ${{ steps.tagcheck.outputs.exists == 'false' || steps.meta.outputs.built == 'true' }}
         run: |
           TAG=${{ steps.meta.outputs.hash }}
           sed -i 's|tag: .*|tag: '"$TAG"'|g' $VALUES_FILE
 
       - name: Commit changes to helm-update branch
-        if: ${{ steps.tagcheck.outputs.exists == 'false' }}
+        if: ${{ steps.tagcheck.outputs.exists == 'false' || steps.meta.outputs.built == 'true' }}
         run: |
           git config user.name "gha-helm-iamge-update"
           git config user.email "actions@github.com"
